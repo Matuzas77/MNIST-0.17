@@ -1,0 +1,227 @@
+name: BESSEL5 R248S isolated final computation
+
+on:
+  push:
+    branches:
+      - bessel5-r248s-final-compute
+    paths:
+      - bessel5_r248s_level38400_sparse_p2new.py
+      - bessel5_r248s_level38400_standard_p2new.py
+      - .github/workflows/bessel5-r248s-final-compute.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - bessel5_r248s_level38400_sparse_p2new.py
+      - bessel5_r248s_level38400_standard_p2new.py
+      - .github/workflows/bessel5-r248s-final-compute.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAGE_IMAGE: sagemath/sagemath@sha256:e068670ae5863b54b2550e72437ec637b0283acb0dc712c8584c124dbf44e667
+
+jobs:
+  certified-smoke-level600:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull pinned SageMath
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker system prune -af || true
+          docker pull "$SAGE_IMAGE"
+          docker image inspect "$SAGE_IMAGE" --format '{{json .RepoDigests}}' > sage_image_digest.txt
+          free -h
+          df -h /
+      - name: Prove sparse and standard T7 agree at level 600
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTDIR=r248_final_smoke_level600_q101
+          rm -rf "$OUTDIR" && mkdir -p "$OUTDIR" && chmod 777 "$OUTDIR"
+          /usr/bin/time -v docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -e SAGE_VERSION=10.9 \
+            "$SAGE_IMAGE" \
+            sage -python bessel5_r248s_level38400_sparse_p2new.py \
+              --level 600 --prime 101 --outdir "$OUTDIR" --verify-standard \
+            2>&1 | tee "$OUTDIR/docker_output.txt"
+          test -f "$OUTDIR/SUCCESS"
+          grep -Fxq PASS "$OUTDIR/SUCCESS"
+          grep -Fq 'STANDARD_T7_VERIFICATION_END equal=true' "$OUTDIR/docker_output.txt"
+          grep -Fq 'SELF_CHECK=PASS' "$OUTDIR/docker_output.txt"
+          cp bessel5_r248s_level38400_sparse_p2new.py sage_image_digest.txt "$OUTDIR/"
+      - name: Hash smoke certificate
+        if: always()
+        shell: bash
+        run: |
+          OUTDIR=r248_final_smoke_level600_q101
+          mkdir -p "$OUTDIR"
+          find "$OUTDIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$OUTDIR/SHA256SUMS" || true
+          cat "$OUTDIR/SHA256SUMS" || true
+      - name: Upload smoke certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R248S_FINAL_LEVEL600_Q101_SPARSE_STANDARD_SMOKE
+          path: r248_final_smoke_level600_q101/
+          if-no-files-found: warn
+          retention-days: 30
+
+  sparse-level38400:
+    needs: certified-smoke-level600
+    strategy:
+      fail-fast: false
+      matrix:
+        prime: [101, 103]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SAGE_NUM_THREADS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reclaim disk and pull SageMath
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker system prune -af || true
+          sudo apt-get clean || true
+          docker pull "$SAGE_IMAGE"
+          docker image inspect "$SAGE_IMAGE" --format '{{json .RepoDigests}}' > sage_image_digest.txt
+          free -h
+          df -h /
+      - name: Provision swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          AVAIL_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          SWAP_GB=$((AVAIL_GB - 10))
+          if [ "$SWAP_GB" -gt 28 ]; then SWAP_GB=28; fi
+          if [ "$SWAP_GB" -lt 8 ]; then SWAP_GB=8; fi
+          AUX_SWAP=/mnt/r248-final-sparse-q${{ matrix.prime }}.swap
+          sudo rm -f "$AUX_SWAP"
+          sudo fallocate -l "${SWAP_GB}G" "$AUX_SWAP"
+          sudo chmod 600 "$AUX_SWAP"
+          sudo mkswap "$AUX_SWAP"
+          sudo swapon "$AUX_SWAP"
+          echo "AUX_SWAP_GB=$SWAP_GB" > auxiliary_swap.txt
+          free -h
+          df -h /
+      - name: Run exact sparse level-38400 census
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTDIR=r248_final_level38400_q${{ matrix.prime }}_sparse_p2new
+          rm -rf "$OUTDIR" && mkdir -p "$OUTDIR" && chmod 777 "$OUTDIR"
+          cp bessel5_r248s_level38400_sparse_p2new.py sage_image_digest.txt auxiliary_swap.txt "$OUTDIR/"
+          /usr/bin/time -v docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -e SAGE_VERSION=10.9 -e SAGE_NUM_THREADS=4 \
+            "$SAGE_IMAGE" \
+            sage -python bessel5_r248s_level38400_sparse_p2new.py \
+              --level 38400 --prime ${{ matrix.prime }} --outdir "$OUTDIR" \
+            2>&1 | tee "$OUTDIR/docker_output.txt"
+          test -f "$OUTDIR/SUCCESS"
+          grep -Fxq PASS "$OUTDIR/SUCCESS"
+          grep -Fq 'SELF_CHECK=PASS' "$OUTDIR/docker_output.txt"
+      - name: Record hashes and environment
+        if: always()
+        shell: bash
+        run: |
+          OUTDIR=r248_final_level38400_q${{ matrix.prime }}_sparse_p2new
+          mkdir -p "$OUTDIR"
+          free -h > "$OUTDIR/memory_after.txt" || true
+          df -h / > "$OUTDIR/disk_after.txt" || true
+          uname -a > "$OUTDIR/uname.txt" || true
+          find "$OUTDIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$OUTDIR/SHA256SUMS" || true
+          cat "$OUTDIR/checkpoint.json" || true
+          cat "$OUTDIR/SHA256SUMS" || true
+      - name: Upload sparse certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R248S_FINAL_LEVEL38400_Q${{ matrix.prime }}_SPARSE_P2NEW
+          path: r248_final_level38400_q${{ matrix.prime }}_sparse_p2new/
+          if-no-files-found: warn
+          retention-days: 30
+
+  standard-level38400-q107:
+    needs: certified-smoke-level600
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SAGE_NUM_THREADS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reclaim disk and pull SageMath
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker system prune -af || true
+          sudo apt-get clean || true
+          docker pull "$SAGE_IMAGE"
+          docker image inspect "$SAGE_IMAGE" --format '{{json .RepoDigests}}' > sage_image_digest.txt
+          free -h
+          df -h /
+      - name: Provision swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          AVAIL_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          SWAP_GB=$((AVAIL_GB - 10))
+          if [ "$SWAP_GB" -gt 28 ]; then SWAP_GB=28; fi
+          if [ "$SWAP_GB" -lt 8 ]; then SWAP_GB=8; fi
+          AUX_SWAP=/mnt/r248-final-standard-q107.swap
+          sudo rm -f "$AUX_SWAP"
+          sudo fallocate -l "${SWAP_GB}G" "$AUX_SWAP"
+          sudo chmod 600 "$AUX_SWAP"
+          sudo mkswap "$AUX_SWAP"
+          sudo swapon "$AUX_SWAP"
+          echo "AUX_SWAP_GB=$SWAP_GB" > auxiliary_swap.txt
+          free -h
+          df -h /
+      - name: Run independent standard level-38400 census
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTDIR=r248_final_level38400_q107_standard_p2new
+          rm -rf "$OUTDIR" && mkdir -p "$OUTDIR" && chmod 777 "$OUTDIR"
+          cp bessel5_r248s_level38400_standard_p2new.py sage_image_digest.txt auxiliary_swap.txt "$OUTDIR/"
+          /usr/bin/time -v docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -e SAGE_VERSION=10.9 -e SAGE_NUM_THREADS=4 \
+            "$SAGE_IMAGE" \
+            sage -python bessel5_r248s_level38400_standard_p2new.py \
+              --prime 107 --outdir "$OUTDIR" \
+            2>&1 | tee "$OUTDIR/docker_output.txt"
+          test -f "$OUTDIR/SUCCESS"
+          grep -Fxq PASS "$OUTDIR/SUCCESS"
+          grep -Fq 'SELF_CHECK=PASS' "$OUTDIR/docker_output.txt"
+      - name: Record hashes and environment
+        if: always()
+        shell: bash
+        run: |
+          OUTDIR=r248_final_level38400_q107_standard_p2new
+          mkdir -p "$OUTDIR"
+          free -h > "$OUTDIR/memory_after.txt" || true
+          df -h / > "$OUTDIR/disk_after.txt" || true
+          uname -a > "$OUTDIR/uname.txt" || true
+          find "$OUTDIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$OUTDIR/SHA256SUMS" || true
+          cat "$OUTDIR/checkpoint.json" || true
+          cat "$OUTDIR/SHA256SUMS" || true
+      - name: Upload standard certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R248S_FINAL_LEVEL38400_Q107_STANDARD_P2NEW
+          path: r248_final_level38400_q107_standard_p2new/
+          if-no-files-found: warn
+          retention-days: 30
