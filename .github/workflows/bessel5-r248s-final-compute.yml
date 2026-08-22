@@ -8,6 +8,13 @@ on:
       - bessel5_r248s_level38400_sparse_p2new.py
       - bessel5_r248s_level38400_standard_p2new.py
       - .github/workflows/bessel5-r248s-final-compute.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - bessel5_r248s_level38400_sparse_p2new.py
+      - bessel5_r248s_level38400_standard_p2new.py
+      - .github/workflows/bessel5-r248s-final-compute.yml
   workflow_dispatch:
 
 permissions:
