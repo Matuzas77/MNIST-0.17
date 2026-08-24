@@ -1,0 +1,172 @@
+name: BESSEL5 R249S independent GF11 sparse census
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/bessel5-r249s-level38400-q11-sparse.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAGE_IMAGE: sagemath/sagemath@sha256:e068670ae5863b54b2550e72437ec637b0283acb0dc712c8584c124dbf44e667
+  SCRIPT_URL: https://raw.githubusercontent.com/Matuzas77/MNIST-0.17/bessel5-r249s-level38400-cached-newspace/bessel5_r249s_sparse_restricted_newspace.py
+
+jobs:
+  q11-sparse-smoke-level600:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out isolated GF11 branch
+        uses: actions/checkout@v4
+
+      - name: Fetch audited sparse source and pinned SageMath
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL "$SCRIPT_URL" -o bessel5_r249s_sparse_restricted_newspace.py
+          sha256sum bessel5_r249s_sparse_restricted_newspace.py | tee source_sha256.txt
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker system prune -af || true
+          docker pull "$SAGE_IMAGE"
+          docker image inspect "$SAGE_IMAGE" --format '{{json .RepoDigests}}' > sage_image_digest.txt
+
+      - name: Validate GF11 sparse route at level 600
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=r249_q11_sparse_level600
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          chmod 777 "$OUT"
+          cp bessel5_r249s_sparse_restricted_newspace.py sage_image_digest.txt source_sha256.txt "$OUT/"
+          /usr/bin/time -v docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e SAGE_VERSION=10.9 \
+            "$SAGE_IMAGE" \
+            sage -python bessel5_r249s_sparse_restricted_newspace.py \
+              --level 600 \
+              --prime 11 \
+              --expected-new-dimension 38 \
+              --outdir "$OUT" \
+              --verify-standard \
+            2>&1 | tee "$OUT/docker_output.txt"
+          test -f "$OUT/SUCCESS"
+          grep -Fxq PASS "$OUT/SUCCESS"
+          grep -Fq 'NEWSPACE_END dimension=38' "$OUT/docker_output.txt"
+          grep -Fq 'STANDARD_T7_END equal=true' "$OUT/docker_output.txt"
+          grep -Fq 'verdict=NO_GO_AT_P7_ON_EXACT_NEWSPACE' "$OUT/docker_output.txt"
+          grep -Fq 'SELF_CHECK=PASS' "$OUT/docker_output.txt"
+
+      - name: Record smoke hashes
+        if: always()
+        shell: bash
+        run: |
+          OUT=r249_q11_sparse_level600
+          mkdir -p "$OUT"
+          free -h > "$OUT/memory_after.txt" || true
+          df -h / > "$OUT/disk_after.txt" || true
+          uname -a > "$OUT/uname.txt" || true
+          find "$OUT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$OUT/SHA256SUMS" || true
+
+      - name: Upload GF11 smoke certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R249S_LEVEL600_GF11_SPARSE_CERTIFICATE
+          path: r249_q11_sparse_level600/
+          if-no-files-found: warn
+          retention-days: 30
+
+  q11-sparse-exact-level38400:
+    needs: q11-sparse-smoke-level600
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Check out isolated GF11 branch
+        uses: actions/checkout@v4
+
+      - name: Fetch audited sparse source and pinned SageMath
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL "$SCRIPT_URL" -o bessel5_r249s_sparse_restricted_newspace.py
+          sha256sum bessel5_r249s_sparse_restricted_newspace.py | tee source_sha256.txt
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker system prune -af || true
+          sudo apt-get clean || true
+          docker pull "$SAGE_IMAGE"
+          docker image inspect "$SAGE_IMAGE" --format '{{json .RepoDigests}}' > sage_image_digest.txt
+
+      - name: Provision auxiliary swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          AVAIL_GB=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
+          SWAP_GB=$((AVAIL_GB - 9))
+          if [ "$SWAP_GB" -gt 24 ]; then SWAP_GB=24; fi
+          if [ "$SWAP_GB" -lt 8 ]; then SWAP_GB=8; fi
+          AUX_SWAP=/mnt/r249-q11-level38400.swap
+          sudo rm -f "$AUX_SWAP"
+          sudo fallocate -l "${SWAP_GB}G" "$AUX_SWAP"
+          sudo chmod 600 "$AUX_SWAP"
+          sudo mkswap "$AUX_SWAP"
+          sudo swapon "$AUX_SWAP"
+          echo "AUX_SWAP_GB=$SWAP_GB" | tee auxiliary_swap.txt
+          free -h
+          df -h /
+
+      - name: Run exact GF11 sparse level-38400 census
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=r249_q11_sparse_level38400
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+          chmod 777 "$OUT"
+          cp bessel5_r249s_sparse_restricted_newspace.py sage_image_digest.txt source_sha256.txt auxiliary_swap.txt "$OUT/"
+          /usr/bin/time -v docker run --rm \
+            -v "$PWD:/work" \
+            -w /work \
+            -e SAGE_VERSION=10.9 \
+            -e SAGE_NUM_THREADS=2 \
+            "$SAGE_IMAGE" \
+            sage -python bessel5_r249s_sparse_restricted_newspace.py \
+              --level 38400 \
+              --prime 11 \
+              --expected-new-dimension 2432 \
+              --outdir "$OUT" \
+            2>&1 | tee "$OUT/docker_output.txt"
+          test -f "$OUT/SUCCESS"
+          grep -Fxq PASS "$OUT/SUCCESS"
+          grep -Fq 'AMBIENT_END dimension=15360' "$OUT/docker_output.txt"
+          grep -Fq 'CUSPIDAL_END dimension=15168' "$OUT/docker_output.txt"
+          grep -Fq 'NEWSPACE_END dimension=2432' "$OUT/docker_output.txt"
+          grep -Fq 'SELF_CHECK=PASS' "$OUT/docker_output.txt"
+
+      - name: Record exact hashes and environment
+        if: always()
+        shell: bash
+        run: |
+          OUT=r249_q11_sparse_level38400
+          mkdir -p "$OUT"
+          free -h > "$OUT/memory_after.txt" || true
+          df -h / > "$OUT/disk_after.txt" || true
+          uname -a > "$OUT/uname.txt" || true
+          find "$OUT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$OUT/SHA256SUMS" || true
+          cat "$OUT/checkpoint.json" || true
+          cat "$OUT/result.json" || true
+          cat "$OUT/SHA256SUMS" || true
+
+      - name: Upload exact GF11 certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R249S_LEVEL38400_GF11_SPARSE_CERTIFICATE
+          path: r249_q11_sparse_level38400/
+          if-no-files-found: warn
+          retention-days: 30
