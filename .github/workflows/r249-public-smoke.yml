@@ -1,0 +1,25 @@
+name: BESSEL5 R249S public runner smoke
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/r249-public-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runner-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify runner
+        run: |
+          set -euo pipefail
+          echo BESSEL5_R249S_PUBLIC_RUNNER=PASS
+          uname -a
+          df -h /
