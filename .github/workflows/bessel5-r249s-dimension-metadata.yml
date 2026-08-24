@@ -1,0 +1,60 @@
+name: BESSEL5 R249S exact dimension metadata
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - bessel5_r249s_dimension_metadata.gp
+      - .github/workflows/bessel5-r249s-dimension-metadata.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pari-dimensions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out isolated metadata branch
+        uses: actions/checkout@v4
+
+      - name: Install PARI/GP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pari-gp
+          gp --version || true
+
+      - name: Compute exact characteristic-zero dimensions
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf r249_dimensions
+          mkdir -p r249_dimensions
+          cp bessel5_r249s_dimension_metadata.gp r249_dimensions/
+          /usr/bin/time -v gp -q bessel5_r249s_dimension_metadata.gp 2>&1 | tee r249_dimensions/gp_output.txt
+          test -f r249_dimensions/SUCCESS
+          grep -Fxq PASS r249_dimensions/SUCCESS
+          grep -Fq 'new=2432' r249_dimensions/gp_output.txt
+          grep -Fq 'SELF_CHECK=PASS' r249_dimensions/gp_output.txt
+
+      - name: Record hashes and environment
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p r249_dimensions
+          free -h > r249_dimensions/memory_after.txt || true
+          df -h / > r249_dimensions/disk_after.txt || true
+          uname -a > r249_dimensions/uname.txt || true
+          find r249_dimensions -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > r249_dimensions/SHA256SUMS || true
+          cat r249_dimensions/SHA256SUMS || true
+
+      - name: Upload dimension certificate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BESSEL5_R249S_CHARACTERISTIC_ZERO_DIMENSION_CERTIFICATE
+          path: r249_dimensions/
+          if-no-files-found: warn
+          retention-days: 30
